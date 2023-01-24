@@ -14,22 +14,13 @@ class BuildMtlxNetwork():
         # Creation
         if not hou.node("/stage/lopnet"):  
             self.Lopnet_network = hou.node("/stage").createNode("lopnet", "lopnet")
-            self.assignmaterial_node = self.Lopnet_network.createNode("assignmaterial", "assignmaterial")
-            self.matlib_node = self.assignmaterial_node.createInputNode(0, "materiallibrary", "matlib")
+            self.matlib_node = self.Lopnet_network.createNode("materiallibrary", "matlib")
             self.geometries_subnet = self.matlib_node.createInputNode(0, "subnet", "geometries")
         else:
             self.Lopnet_network = hou.node("/stage/lopnet")
-            self.assignmaterial_node = hou.node("/stage/lopnet/assignmaterial")
             self.matlib_node = hou.node("/stage/lopnet/matlib")
             self.geometries_subnet = hou.node("/stage/lopnet/geometries")
                    
-    # def getListOfFBXMaterials(self):
-    #     materials = hou.node(self.FBX_path_node.path() + "/materials")
-    #     for name_index in range(len(list(materials.children()))):
-    #         self.shader_node_names.append(materials.children()[name_index].name())
-    # 
-    # 
-
     def copyTransforms(self, a, b):
         b.setParms({"tx": a.evalParm("tx"), "ty": a.evalParm("ty"), "tz": a.evalParm("tz"),
                     "rx": a.evalParm("rx"), "ry": a.evalParm("ry"), "rz": a.evalParm("rz"),    
@@ -47,6 +38,21 @@ class BuildMtlxNetwork():
             else:
                 self.fbx_geos_shader_names[result.group(1)] = [] # Create dictionary of all FBX shaders.
 
+    def getFilesInFolder(self):
+        texture_paths = []
+        # TODO rework "textures_name" into dictionary with it's filename & absolute path
+
+        textures_name = [f for f in os.listdir(self.textures_folder) if os.path.isfile(os.path.join(self.textures_folder, f))]
+        
+        for x, name in enumerate(self.fbx_geos_shader_names.keys()):
+            temp_texture_names = [] # Temporary list to be append into list after loop
+            for y,texture_name in enumerate(textures_name):
+                if(texture_name.lower().find(str(name.lower())) >= 0): # If shader name (from shop_materialpath) matches the Image file naming = append to list
+                    temp_texture_names.append(texture_name) 
+                else:
+                    pass
+            self.fbx_geos_shader_names[name] = temp_texture_names # feed list into corresponding values
+
     def createReferenceGeometries(self):
         merge_node = hou.node(self.geometries_subnet.path() + "/output0").createInputNode(0, "merge","merge")
         for i, node in enumerate(self.fbx_geos):
@@ -58,9 +64,6 @@ class BuildMtlxNetwork():
 
             self.copyTransforms(fbx_sop, transform_node) # Copy transforms from FBX Nodes
         self.geometries_subnet.layoutChildren()
-
-            # print(str(self.FBX_path_node.path()) + "/" + str(self.fbx_geos[0]))    
-            # print(list(self.fbx_geos_shader_names.keys())[0])    
         
     def createShaderSubnets(self):
         # Create reference "mtlxstandard_surface" node
@@ -77,27 +80,18 @@ class BuildMtlxNetwork():
         for key, value in self.fbx_geos_shader_names.items():
             if not hou.node("{0}/{1}".format(self.matlib_node.path(), key)):
                 current_subnet = self.matlib_node.createNode("subnet", key)
+                current_subnet.setMaterialFlag("on")
                 current_subnet.deleteItems(current_subnet.allItems())
             else:
                 pass
         self.matlib_node.layoutChildren()
+        self.matlib_node.parm("fillmaterials").pressButton()
+        self.matlib_node.setParms({"assign1": 1})
+
+        # assign material to each geometry
+        for index, key in enumerate(list(self.fbx_geos_shader_names.keys())):
+            self.matlib_node.setParms({"geopath" + str(index + 1): "/Geometries/" + key })
     
-
-    def getFilesInFolder(self):
-        texture_paths = []
-        # TODO rework "textures_name" into dictionary with it's filename & absolute path
-
-        textures_name = [f for f in os.listdir(self.textures_folder) if os.path.isfile(os.path.join(self.textures_folder, f))]
-        
-        for x, name in enumerate(self.fbx_geos_shader_names.keys()):
-            temp_texture_names = [] # Temporary list to be append into list after loop
-            for y,texture_name in enumerate(textures_name):
-                if(texture_name.lower().find(str(name.lower())) >= 0): # If shader name (from shop_materialpath) matches the Image file naming = append to list
-                    temp_texture_names.append(texture_name) 
-                else:
-                    pass
-            self.fbx_geos_shader_names[name] = temp_texture_names # feed list into corresponding values
-
     def setupEachShader(self):
         for key, value in self.fbx_geos_shader_names.items():
             print("Processing: ", key)
@@ -119,8 +113,9 @@ class BuildMtlxNetwork():
                 mtlxuv.setParms({"signature": "vector2"})
                 
                 # Create and connect images
+
                 # for img_index in range(len(self.mtlx_input_names)):
-                for img_index in range(len(self.mtlx_input_names)):
+                for img_index in range(2):
                     current_img = mtlx_node.createInputNode(img_index, "mtlximage", self.mtlx_input_names[img_index])
                     current_img.setInput(1, mtlxuv, 0)
                     try:
@@ -128,13 +123,12 @@ class BuildMtlxNetwork():
                     except:
                         current_img.setParms({"file": ""})
                 current_subnet.layoutChildren()
-
             
 def execute():
     bmn = BuildMtlxNetwork()
     # bmn.getListOfFBXMaterials()
     bmn.getInfoAboutFBX()
-    bmn.createReferenceGeometries()
     bmn.getFilesInFolder()
+    bmn.createReferenceGeometries()
     bmn.createShaderSubnets()
     bmn.setupEachShader()
