@@ -6,8 +6,9 @@ class BuildMtlxNetwork():
     def __init__(self):
         self.mtlx_input_names = None
         self.shader_node_names = []
-        self.textures_folder = os.path.abspath("C:\\SSD\\Marie\\files\\knight-artorias\\textures")
-        self.FBX_path_node = hou.node("/obj/Artorias_fbx/")
+        # self.textures_folder = os.path.abspath("C:\\SSD\\Marie\\files\\knight-artorias\\textures")
+        self.textures_folder = os.path.abspath("C:\\SSD\\Marie\\files\\m1-garand\\textures")
+        self.FBX_path_node = hou.node("/obj/Artorias_fbx_orig_test/")
         self.fbx_geos = self.FBX_path_node.recursiveGlob("*", hou.nodeTypeFilter.ObjGeometry)
         self.fbx_geos_shader_names = {}
 
@@ -31,12 +32,14 @@ class BuildMtlxNetwork():
         })
 
     def getInfoAboutFBX(self):
-        for i, name in enumerate(self.fbx_geos):
-            result = re.search(r"(\w*$)", self.fbx_geos[i].evalParm("shop_materialpath")) # get FBX Principled shader's name
-            if result.group(1) == "":
-                pass
-            else:
-                self.fbx_geos_shader_names[result.group(1)] = [] # Create dictionary of all FBX shaders.
+        # print(self.fbx_geos[0].displayNode().geometry().findPrimAttrib("shop_materialpath").strings())
+        for i, fbx_nodes in enumerate(self.fbx_geos):
+            for shop in fbx_nodes.displayNode().geometry().findPrimAttrib("shop_materialpath").strings():
+                result = re.search(r"(\w*$)", shop) # get FBX Principled shader's name
+                if result.group(1) == "":
+                    pass
+                else:
+                    self.fbx_geos_shader_names[result.group(1)] = [] # Create dictionary of all FBX shaders.
 
     def getFilesInFolder(self):
         texture_paths = []
@@ -54,17 +57,45 @@ class BuildMtlxNetwork():
             self.fbx_geos_shader_names[name] = temp_texture_names # feed list into corresponding values
 
     def createReferenceGeometries(self):
+        print(self.fbx_geos[0])
         merge_node = hou.node(self.geometries_subnet.path() + "/output0").createInputNode(0, "merge","merge")
         for i, node in enumerate(self.fbx_geos):
             fbx_sop = hou.node(self.FBX_path_node.path() + "/" + str(self.fbx_geos[i]))
-            transform_node = self.geometries_subnet.createNode("xform",list(self.fbx_geos_shader_names.keys())[i] + "_transform")
-            reference_geo = transform_node.createInputNode(0, "sopimport", list(self.fbx_geos_shader_names.keys())[i])
-            reference_geo.setParms({"soppath": fbx_sop.path(), "pathprefix": "/Geometries/$OS"})
+            transform_node = self.geometries_subnet.createNode("xform", str(self.fbx_geos[i]) + "_transform")
+            reference_geo = transform_node.createInputNode(0, "sopimport", str(self.fbx_geos[i]))
+            reference_geo.setParms({"soppath": fbx_sop.path(),
+            "pathprefix": "/Geometries/$OS",
+            "bindmaterials":"createbind",
+            "enable_partitionattribs":1,
+            "enable_prefixpartitionsubsets":1,
+            "prefixpartitionsubsets":0,
+            "partitionattribs":"materialBind",
+            })
             merge_node.setNextInput(transform_node)
 
             self.copyTransforms(fbx_sop, transform_node) # Copy transforms from FBX Nodes
         self.geometries_subnet.layoutChildren()
-        
+
+
+    def modifyFBX(self):
+        for i, node in enumerate(self.fbx_geos):
+            # find "file" node inside geo
+            file_node = node.cookPathNodes()[-1]
+
+            #create "output" primwrangle with vex inside
+            snippet_code = '''// Create "usdmaterialpath" and "materialBind" for subsets
+s@materialBind = re_replace(r"(.*\/)", "", @shop_materialpath);
+s@shop_materialpath = sprintf("/materials/%s", s@materialBind);
+s@usdmaterialpath = s@shop_materialpath;      
+'''
+            primwrangle_node = node.createNode("attribwrangle","output")
+            primwrangle_node.setParms({"class":"primitive"})
+            primwrangle_node.parm("snippet").set(snippet_code)
+            primwrangle_node.setInput(0,file_node)
+            primwrangle_node.setDisplayFlag("on")
+            primwrangle_node.setRenderFlag("on")
+            node.layoutChildren()
+
     def createShaderSubnets(self):
         # Create reference "mtlxstandard_surface" node
         if not hou.node("{0}/reference_mtlx".format(self.matlib_node.path())):
@@ -88,9 +119,12 @@ class BuildMtlxNetwork():
         self.matlib_node.parm("fillmaterials").pressButton()
         self.matlib_node.setParms({"assign1": 1})
 
-        # assign material to each geometry
-        for index, key in enumerate(list(self.fbx_geos_shader_names.keys())):
-            self.matlib_node.setParms({"geopath" + str(index + 1): "/Geometries/" + key })
+        # # assign material to each geometry
+        # for index, key in enumerate(list(self.fbx_geos_shader_names.keys())):
+        #     self.matlib_node.setParms({"geopath" + str(index + 1): "/Geometries/" + key })
+
+        # Edit "shop_materialpath" to materialX
+
     
     def setupEachShader(self):
         for key, value in self.fbx_geos_shader_names.items():
@@ -128,6 +162,7 @@ def execute():
     bmn = BuildMtlxNetwork()
     # bmn.getListOfFBXMaterials()
     bmn.getInfoAboutFBX()
+    bmn.modifyFBX()
     bmn.getFilesInFolder()
     bmn.createReferenceGeometries()
     bmn.createShaderSubnets()
