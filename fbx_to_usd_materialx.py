@@ -6,8 +6,8 @@ class BuildMtlxNetwork():
     def __init__(self):
         self.mtlx_input_names = None
         self.shader_node_names = []
-        self.textures_folder = os.path.abspath("C:\\SSD\\Marie\\files\\wagon-texturing-demo\\textures")
-        self.FBX_path_node = hou.node("/obj/WagonLow_test/")
+        self.textures_folder = os.path.abspath(hou.node(hou.pwd().path()).evalParm("texture_folder"))
+        self.FBX_path_node = hou.node(hou.node(hou.pwd().path()).evalParm("fbx_subnet"))
         self.fbx_geos = self.FBX_path_node.recursiveGlob("*", hou.nodeTypeFilter.ObjGeometry) # IF TYPE GEOMETRY
         self.fbx_geos_shader_names = {}
 
@@ -15,19 +15,29 @@ class BuildMtlxNetwork():
         self.baseColor_list = ["base","diffuse","albedo","diff"]
         self.metallic_list = ["metallic","metalness"]
         self.specular_list = ["specular","spec"]
-        self.roughness_list = ["roughness","rough"]
+        self.roughness_list = ["roughness","rough","gloss","glossiness"]
         self.normal_list = ["normal","nrm"]
 
 
         # Creation
-        if not hou.node("/stage/lopnet"):  
-            self.Lopnet_network = hou.node("/stage").createNode("lopnet", "lopnet")
+        if not hou.node(hou.pwd().path() + "/lopnet"):  
+            self.Lopnet_network = hou.pwd().createNode("lopnet", "lopnet")
             self.matlib_node = self.Lopnet_network.createNode("materiallibrary", "matlib")
             self.geometries_subnet = self.matlib_node.createInputNode(0, "subnet", "geometries")
+            self.usd_rop = self.Lopnet_network.createNode("usd_rop", "Export_USD")
+            self.sublayer = self.Lopnet_network.createNode("sublayer", "Import_USD")
+
+            self.usd_rop.setParms({"lopoutput": "$HIP/geo/OS.usd", "savestyle":"flattenstage"})
+            self.sublayer.setParms({"filepath1": '`chs("../Export_USD/lopoutput")`'})
+            
+            self.usd_rop.setInput(0,self.matlib_node)
         else:
-            self.Lopnet_network = hou.node("/stage/lopnet")
-            self.matlib_node = hou.node("/stage/lopnet/matlib")
-            self.geometries_subnet = hou.node("/stage/lopnet/geometries")
+            self.Lopnet_network = hou.node(hou.pwd().path() + "/lopnet")
+            self.matlib_node = hou.node(hou.pwd().path() + "/matlib")
+            self.geometries_subnet = hou.node(hou.pwd() + "/geometries")
+            self.usd_rop = hou.node(hou.pwd() + "/Export_USD")
+            self.sublayer = hou.node(hou.pwd() + "/Import_USD")
+        self.Lopnet_network.layoutChildren()
                    
     def copyTransforms(self, a, b):
         b.setParms({"tx": a.evalParm("tx"), "ty": a.evalParm("ty"), "tz": a.evalParm("tz"),
@@ -39,7 +49,6 @@ class BuildMtlxNetwork():
         })
 
     def getInfoAboutFBX(self):
-        # print(self.fbx_geos[0].displayNode().geometry().findPrimAttrib("shop_materialpath").strings())
         for i, fbx_nodes in enumerate(self.fbx_geos):
             for shop in fbx_nodes.displayNode().geometry().findPrimAttrib("shop_materialpath").strings():
                 result = re.search(r"(\w*$)", shop) # get FBX Principled shader's name
@@ -50,8 +59,6 @@ class BuildMtlxNetwork():
 
     def getFilesInFolder(self):
         texture_paths = []
-        # TODO rework "textures_name" into dictionary with it's filename & absolute path
-
         textures_name = [f for f in os.listdir(self.textures_folder) if os.path.isfile(os.path.join(self.textures_folder, f))]
         
         for x, name in enumerate(self.fbx_geos_shader_names.keys()):
@@ -62,7 +69,6 @@ class BuildMtlxNetwork():
                 else:
                     pass
             self.fbx_geos_shader_names[name] = temp_texture_names # feed list into corresponding values
-        # print(self.fbx_geos_shader_names)
 
     def createReferenceGeometries(self):
         merge_node = hou.node(self.geometries_subnet.path() + "/output0").createInputNode(0, "merge","merge")
@@ -78,8 +84,8 @@ class BuildMtlxNetwork():
             "prefixpartitionsubsets":0,
             "partitionattribs":"materialBind",
             })
-            merge_node.setNextInput(transform_node)
 
+            merge_node.setNextInput(transform_node)
             self.copyTransforms(fbx_sop, transform_node) # Copy transforms from FBX Nodes
         self.geometries_subnet.layoutChildren()
 
@@ -110,7 +116,6 @@ s@usdmaterialpath = s@shop_materialpath;
             mtlx_ref = hou.node("{0}/reference_mtlx".format(self.matlib_node.path()))
         
         # Get all input names from MTLX REFERENCE
-        # print(type(mtlx_ref.inputDataTypes()))
         self.mtlx_input_names = mtlx_ref.inputNames()
         mtlx_ref.destroy()
         
@@ -125,25 +130,29 @@ s@usdmaterialpath = s@shop_materialpath;
         self.matlib_node.layoutChildren()
         self.matlib_node.setParms({"assign1": 1})
 
-    def createMtlxImage(self, img_name, texture_stripped, string_list, selected_node, in_num):
+    def createMtlxImage(self, filename, filename_stripped, string_list, selected_node, in_num, signature):
         for item in string_list:
-            if(texture_stripped.lower().find(str(item.lower())) >= 0):
+            if(filename_stripped.lower().find(str(item.lower())) >= 0):
                 current_img = selected_node.createInputNode(in_num, "mtlximage", selected_node.inputNames()[in_num])
-                current_img.setParms({"file": self.textures_folder + "\\" + img_name})
+                current_img.setParms({"file": self.textures_folder + "\\" + filename,"signature":signature})
                 current_img.setInput(1, self.mtlxuv, 0)
-                print("Found:", item)
+                # print("Found:", item)
                 break
             else:
                 pass
     
     def setupEachShader(self):
         for texture, value in self.fbx_geos_shader_names.items():
-            print("\n")
-            print("Processing: ", texture)
+            # debug print
+            # print("\n")
+            # print("Processing: ", texture)
+
+            hou.ui.setStatusMessage("Setting up Shader Subnets -> " + texture)
             # Get current subnet
             current_subnet = hou.node("{0}/{1}".format(self.matlib_node.path(), texture))
             if not current_subnet.allItems():            
                 # Surface output
+                
                 output_surface = current_subnet.createNode("subnetconnector", "surface_output")
                 output_surface.setParms({"connectorkind": 1, "parmname": "surface", "parmlabel": "Surface", "parmtype": "surface"})
                 
@@ -159,30 +168,32 @@ s@usdmaterialpath = s@shop_materialpath;
                 self.mtlxuv.setParms({"signature": "vector2"})
                 
                 # Create and connect images
-
-                # for img_index in range(len(self.mtlx_input_names)):
-                for i, img_name in enumerate(self.fbx_geos_shader_names[texture]):
-                    print("img_name: ", img_name)
+                for i, filename in enumerate(self.fbx_geos_shader_names[texture]):
+                    # debug print
+                    # print("Found: ", filename)
+                    
                     # get rid of shader in the string
-                    texture_stripped = img_name.replace(texture,"")
+                    filename_stripped = filename.replace(texture,"")
 
                     # compare inside if statement                    
-                    self.createMtlxImage(img_name, texture_stripped, self.baseColor_list, self.mtlx_node, 1)
-                    self.createMtlxImage(img_name, texture_stripped, self.roughness_list, self.mtlx_node, 6)
-                    self.createMtlxImage(img_name, texture_stripped, self.specular_list, self.mtlx_node, 5)
-                    self.createMtlxImage(img_name, texture_stripped, self.metallic_list, self.mtlx_node, 3)
-                    self.createMtlxImage(img_name, texture_stripped, self.normal_list, displacement_node, 0)
-
+                    self.createMtlxImage(filename, filename_stripped, self.baseColor_list, self.mtlx_node, 1, "color3")
+                    self.createMtlxImage(filename, filename_stripped, self.roughness_list, self.mtlx_node, 6, "float")
+                    self.createMtlxImage(filename, filename_stripped, self.specular_list, self.mtlx_node, 5, "color3")
+                    self.createMtlxImage(filename, filename_stripped, self.metallic_list, self.mtlx_node, 3, "float")
+                    self.createMtlxImage(filename, filename_stripped, self.normal_list, displacement_node, 0, "vector3")
 
                 current_subnet.layoutChildren()
         self.matlib_node.parm("fillmaterials").pressButton()
             
-def execute():
+def execute_conversion():
+    if hou.node(hou.pwd().path() + "/lopnet"): 
+        hou.node(hou.pwd().path() + "/lopnet").destroy()
     bmn = BuildMtlxNetwork()
-    # bmn.getListOfFBXMaterials()
     bmn.getInfoAboutFBX()
     bmn.modifyFBX()
     bmn.getFilesInFolder()
     bmn.createReferenceGeometries()
     bmn.createShaderSubnets()
     bmn.setupEachShader()
+    hou.ui.displayConfirmation("Lopnet Finished!")
+    hou.ui.setStatusMessage("Lopnet Finished!")
