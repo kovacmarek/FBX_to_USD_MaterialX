@@ -6,11 +6,18 @@ class BuildMtlxNetwork():
     def __init__(self):
         self.mtlx_input_names = None
         self.shader_node_names = []
-        # self.textures_folder = os.path.abspath("C:\\SSD\\Marie\\files\\knight-artorias\\textures")
-        self.textures_folder = os.path.abspath("C:\\SSD\\Marie\\files\\m1-garand\\textures")
-        self.FBX_path_node = hou.node("/obj/Artorias_fbx_orig_test/")
-        self.fbx_geos = self.FBX_path_node.recursiveGlob("*", hou.nodeTypeFilter.ObjGeometry)
+        self.textures_folder = os.path.abspath("C:\\SSD\\Marie\\files\\wagon-texturing-demo\\textures")
+        self.FBX_path_node = hou.node("/obj/WagonLow_test/")
+        self.fbx_geos = self.FBX_path_node.recursiveGlob("*", hou.nodeTypeFilter.ObjGeometry) # IF TYPE GEOMETRY
         self.fbx_geos_shader_names = {}
+
+        # Naming convention
+        self.baseColor_list = ["base","diffuse","albedo","diff"]
+        self.metallic_list = ["metallic","metalness"]
+        self.specular_list = ["specular","spec"]
+        self.roughness_list = ["roughness","rough"]
+        self.normal_list = ["normal","nrm"]
+
 
         # Creation
         if not hou.node("/stage/lopnet"):  
@@ -55,9 +62,9 @@ class BuildMtlxNetwork():
                 else:
                     pass
             self.fbx_geos_shader_names[name] = temp_texture_names # feed list into corresponding values
+        # print(self.fbx_geos_shader_names)
 
     def createReferenceGeometries(self):
-        print(self.fbx_geos[0])
         merge_node = hou.node(self.geometries_subnet.path() + "/output0").createInputNode(0, "merge","merge")
         for i, node in enumerate(self.fbx_geos):
             fbx_sop = hou.node(self.FBX_path_node.path() + "/" + str(self.fbx_geos[i]))
@@ -75,7 +82,6 @@ class BuildMtlxNetwork():
 
             self.copyTransforms(fbx_sop, transform_node) # Copy transforms from FBX Nodes
         self.geometries_subnet.layoutChildren()
-
 
     def modifyFBX(self):
         for i, node in enumerate(self.fbx_geos):
@@ -104,6 +110,7 @@ s@usdmaterialpath = s@shop_materialpath;
             mtlx_ref = hou.node("{0}/reference_mtlx".format(self.matlib_node.path()))
         
         # Get all input names from MTLX REFERENCE
+        # print(type(mtlx_ref.inputDataTypes()))
         self.mtlx_input_names = mtlx_ref.inputNames()
         mtlx_ref.destroy()
         
@@ -116,21 +123,25 @@ s@usdmaterialpath = s@shop_materialpath;
             else:
                 pass
         self.matlib_node.layoutChildren()
-        self.matlib_node.parm("fillmaterials").pressButton()
         self.matlib_node.setParms({"assign1": 1})
 
-        # # assign material to each geometry
-        # for index, key in enumerate(list(self.fbx_geos_shader_names.keys())):
-        #     self.matlib_node.setParms({"geopath" + str(index + 1): "/Geometries/" + key })
-
-        # Edit "shop_materialpath" to materialX
-
+    def createMtlxImage(self, img_name, texture_stripped, string_list, selected_node, in_num):
+        for item in string_list:
+            if(texture_stripped.lower().find(str(item.lower())) >= 0):
+                current_img = selected_node.createInputNode(in_num, "mtlximage", selected_node.inputNames()[in_num])
+                current_img.setParms({"file": self.textures_folder + "\\" + img_name})
+                current_img.setInput(1, self.mtlxuv, 0)
+                print("Found:", item)
+                break
+            else:
+                pass
     
     def setupEachShader(self):
-        for key, value in self.fbx_geos_shader_names.items():
-            print("Processing: ", key)
+        for texture, value in self.fbx_geos_shader_names.items():
+            print("\n")
+            print("Processing: ", texture)
             # Get current subnet
-            current_subnet = hou.node("{0}/{1}".format(self.matlib_node.path(), key))
+            current_subnet = hou.node("{0}/{1}".format(self.matlib_node.path(), texture))
             if not current_subnet.allItems():            
                 # Surface output
                 output_surface = current_subnet.createNode("subnetconnector", "surface_output")
@@ -141,22 +152,30 @@ s@usdmaterialpath = s@shop_materialpath;
                 output_displacement.setParms({"connectorkind": 1, "parmname": "displacement", "parmlabel": "Displacement", "parmtype": "displacement"})
                 
                 # connect nodes
-                output_displacement.createInputNode(0, "mtlxdisplacement", "mtlxdisplacement")
-                mtlx_node = output_surface.createInputNode(0, "mtlxstandard_surface", "mtlx_material")
-                mtlxuv = current_subnet.createNode("mtlxtexcoord", "mtlxtexcoord")
-                mtlxuv.setParms({"signature": "vector2"})
+                displacement_node = output_displacement.createInputNode(0, "mtlxdisplacement", "mtlxdisplacement")
+                displacement_node.setParms({"scale": 0.01})
+                self.mtlx_node = output_surface.createInputNode(0, "mtlxstandard_surface", "mtlx_material")
+                self.mtlxuv = current_subnet.createNode("mtlxtexcoord", "mtlxtexcoord")
+                self.mtlxuv.setParms({"signature": "vector2"})
                 
                 # Create and connect images
 
                 # for img_index in range(len(self.mtlx_input_names)):
-                for img_index in range(2):
-                    current_img = mtlx_node.createInputNode(img_index, "mtlximage", self.mtlx_input_names[img_index])
-                    current_img.setInput(1, mtlxuv, 0)
-                    try:
-                        current_img.setParms({"file": self.textures_folder + "\\" + self.fbx_geos_shader_names[key][img_index]})
-                    except:
-                        current_img.setParms({"file": ""})
+                for i, img_name in enumerate(self.fbx_geos_shader_names[texture]):
+                    print("img_name: ", img_name)
+                    # get rid of shader in the string
+                    texture_stripped = img_name.replace(texture,"")
+
+                    # compare inside if statement                    
+                    self.createMtlxImage(img_name, texture_stripped, self.baseColor_list, self.mtlx_node, 1)
+                    self.createMtlxImage(img_name, texture_stripped, self.roughness_list, self.mtlx_node, 6)
+                    self.createMtlxImage(img_name, texture_stripped, self.specular_list, self.mtlx_node, 5)
+                    self.createMtlxImage(img_name, texture_stripped, self.metallic_list, self.mtlx_node, 3)
+                    self.createMtlxImage(img_name, texture_stripped, self.normal_list, displacement_node, 0)
+
+
                 current_subnet.layoutChildren()
+        self.matlib_node.parm("fillmaterials").pressButton()
             
 def execute():
     bmn = BuildMtlxNetwork()
